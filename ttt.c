@@ -1,118 +1,91 @@
-/*
-board positions: 
-1 2 3 
-4 5 6
-7 8 9
-*/
-
-// much simpler than my previous c++ oop garbage
-
-#include <stdbool.h>
-#include <stdio.h>
-#include <string.h>
+#include <unistd.h>
 #include <stdlib.h>
+#include <string.h>
 
-#include <ncurses.h>
+// emt = empty
+#define EMT 0x2D
+#define PLX 0x78
+#define PLO 0x6F
+#define TIE 0x03
 
-// This is for the board drawing and for the winner
-typedef enum {
-  EMPTY,
-  PLAYER_X,
-  PLAYER_O,
-  TIE
-} board_t;
+#define u8 unsigned char
 
-board_t board[9] = {
-  EMPTY, EMPTY, EMPTY,
-  EMPTY, EMPTY, EMPTY,
-  EMPTY, EMPTY, EMPTY
-};
+u8 check_winner(u8 b[9]) {
+  // columns
+  if (b[0] != EMT && b[0] == b[3] && b[0] == b[6]) return b[0];
+  if (b[1] != EMT && b[1] == b[4] && b[1] == b[7]) return b[1];
+  if (b[2] != EMT && b[2] == b[5] && b[2] == b[8]) return b[2];
+  // rows
+  if (b[0] != EMT && b[0] == b[1] && b[0] == b[2]) return b[0];
+  if (b[3] != EMT && b[3] == b[4] && b[3] == b[5]) return b[3];
+  if (b[6] != EMT && b[6] == b[7] && b[6] == b[8]) return b[6];
+  // diagonal
+  if (b[0] != EMT && b[0] == b[4] && b[0] == b[8]) return b[0];
+  if (b[2] != EMT && b[2] == b[4] && b[2] == b[6]) return b[2];
 
-// this is for me to test ttt board format (visuals)
-board_t testing_board[9] = {
-  PLAYER_X, PLAYER_O, PLAYER_X,
-  PLAYER_O, PLAYER_X, PLAYER_O,
-  PLAYER_O, PLAYER_X, PLAYER_O
-};
+  for (int i = 0; i < 9; i++) if (b[i] == EMT) return EMT;
 
-// turns board member into a char (X, O)
-char board_to_char(board_t sh) {
-  switch (sh) {
-    case EMPTY:
-      return '-';
-    case PLAYER_X:
-      return 'X';
-    case PLAYER_O:
-      return 'O';
-    default:
-      return '~';
-  }
-}
-
-// checks winner, no idea how it works, it just does
-board_t check_winner(board_t b[9]) {
-  for (int i = 0; i < 3; i++) {
-    if (b[i] && b[i] == b[i+3] && b[i] == b[i+6]) return b[i];
-    if (b[i*3] && b[i*3] == b[i*3+1] && b[i*3] == b[i*3+2]) return b[i*3];
-  }
-  if (b[0] && b[0] == b[4] && b[0] == b[8]) return b[0];
-  if (b[2] && b[2] == b[4] && b[2] == b[6]) return b[2];
-  for (int i = 0; i < 9; i++) if (b[i] == EMPTY) return EMPTY;
   return TIE;
 }
 
-// draws tictactoe board simply
-void render_board(board_t tttboard[9]) {
+void render_board(int fd, u8 tboard[9]) {
+  char buf[20], *p = buf;
   for (int i = 0; i < 9; i++) {
-    printw("%c ", board_to_char(tttboard[i]));
-    if (i % 3 == 2) printw("\n");
-  }
+    *p++ = tboard[i];
+    *p++ = (i % 3 == 2) ? '\n' : ' ';
+  } *p = 0x00;
+  write(fd, buf, p-buf);
 }
 
-// updates board with a new player spot
-void add_to_board(board_t player, short pos) {
+void add_to_board(u8 board[9], u8 player, u8 pos) {
   board[pos] = player;
 }
 
+void t_getchar(int fd) {
+  char c;
+  read(fd, &c, 1);
+}
+
+void t_flush(int fd) {
+  char c;
+  while (read(fd, &c, 1) == 1 && c != '\n');
+}
+
 int main() {
-  char pos[3];
-  bool player_x = true;
-  initscr();
-  while (1) {
-    erase();
+  u8 board[9] = {EMT, EMT, EMT, EMT, EMT, EMT, EMT, EMT, EMT};
 
-    render_board(board);
+  char pos[2];
+  u8 turn = 0;
 
-    board_t winner = check_winner(board);
-    if (winner != EMPTY) {
-      curs_set(0);
-      if (winner == TIE) printw("it's a tie!\n");
-      else printw("player %c wins!\n", (winner == PLAYER_X) ? 'X' : 'O');
-      getch();
-      curs_set(1);
+  for (;;) {
+    render_board(STDOUT_FILENO, board);
+
+    u8 winner = check_winner(board);
+    if (winner != EMT) {
+      if (winner == TIE) write(STDOUT_FILENO, "its a tie!\n", 11);
+      else write(STDOUT_FILENO, (winner == PLX) ? "player X wins!" : "player O wins!", 14);
+      t_getchar(STDIN_FILENO);
       break;
     }
 
-    printw(player_x ? "pos(x): " : "pos(o): ");
-    getnstr(pos, sizeof(pos));
+    write(STDOUT_FILENO, (turn & 1) ? "pos(o): " : "pos(x): ", 8);
+    ssize_t n = read(STDIN_FILENO, pos, sizeof(pos) - 1);
+    t_flush(STDOUT_FILENO);
 
-    // means strcmp() == 0
-    if (!strcmp(pos, "q")) break;
+    if (pos[0] == 'q') break;
+
+    write(STDOUT_FILENO, "\n", 1);
 
     short index = atoi(pos) - 1;
-    if (index >= 0 && index < 9 && board[index] == EMPTY) {
-      add_to_board(player_x ? PLAYER_X : PLAYER_O, index);
-    } 
+    if (index >= 0 && index < 9 && board[index] == EMT) {
+      add_to_board(board, (turn & 1) ? PLO : PLX, index);
+    }
     else {
-      curs_set(0);
-      printw("invalid");
-      getch();
-      curs_set(1);
+      write(STDOUT_FILENO, "invalid\n\n", 9);
       continue;
     }
-    player_x = !player_x;
+    turn++;
   }
 
-  endwin();
   return 0;
 }
